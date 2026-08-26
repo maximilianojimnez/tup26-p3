@@ -87,8 +87,8 @@ static class AlumnosManager {
     }
 
     public static void Escribir(IEnumerable<Alumno> alumnos, string rutaArchivo) {
-        string[] etiquetas = ["Legajo", "Nombre y Apellido", "Teléfono", "GitHub", "Prácticos", "Exm", "Prs", "Ast", "Nta", "Observaciones"];
-        string[] guiones = ["------", "------------------------------", "-------------", "-------------------------", "----------", "---", "---", "---", "---", "------------------------"];
+        string[] etiquetas = ["Legajo", "Nombre y Apellido", "Teléfono", "GitHub", "Prácticos", "Exm", "Prs", "Ast", "Nta", "Recuperación", "Observaciones"];
+        string[] guiones = ["------", "------------------------------", "-------------", "-------------------------", "----------", "----", "---", "---", "---", "----------------", "------------------------"];
         try {
             List<Alumno> alumnosOrdenados = new(alumnos);
             alumnosOrdenados.Sort(Alumno.Comparar);
@@ -112,7 +112,7 @@ static class AlumnosManager {
                     sb.AppendLine($"## {comisionActual}");
                     sb.AppendLine("```text");
                     sb.AppendLine(FormatearFilaTabla(etiquetas));
-                    sb.AppendLine(FormatearFilaTabla(guiones));
+                    sb.AppendLine(FormatearSeparadorTabla(guiones));
                 }
 
                 sb.AppendLine(FormatearFila(alumno));
@@ -131,7 +131,7 @@ static class AlumnosManager {
 
     public static void EscribirEstadoInformer(IEnumerable<Alumno> alumnos, string rutaArchivo) {
         string[] etiquetas = ["Legajo", "Nombre y Apellido", "Prácticos", "Exm", "Ast", "Nta"];
-        string[] guiones = ["------", "------------------------------", "----------", "---", "---", "---"];
+        string[] guiones = ["------", "------------------------------", "----------", "----", "---", "---"];
 
         try {
             List<Alumno> alumnosOrdenados = new(alumnos);
@@ -174,8 +174,8 @@ static class AlumnosManager {
     }
 
     public static void Listar(IEnumerable<Alumno> alumnos, string titulo = "Listado de Alumnos") {
-        string[] campos = ["Legajo", "Nombre y Apellido", "Teléfono", "GitHub", "Prácticos", "Exm", "Prs", "Ast", "Nta"];
-        string[] guiones = ["------", "------------------------------", "-------------", "-------------------------", "----------", "---", "---", "---", "---"];
+        string[] campos = ["Legajo", "Nombre y Apellido", "Teléfono", "GitHub", "Prácticos", "Exm", "Prs", "Ast", "Nta", "Recuperación"];
+        string[] guiones = ["------", "------------------------------", "-------------", "-------------------------", "----------", "----", "---", "---", "---", "----------------"];
 
         string comision = "";
         if (!alumnos.Any()) {
@@ -286,7 +286,7 @@ static class AlumnosManager {
             if (carpetasConLegajo.Count == 1) {
                 string rutaCarpetaExistente = carpetasConLegajo[0];
                 string rutaRelativa = AppPaths.RutaRelativaDesdePracticos(rutaCarpetaExistente);
-                if (!string.Equals(rutaCarpetaExistente, rutaCarpeta, StringComparison.OrdinalIgnoreCase)) {
+                if (!string.Equals(rutaCarpetaExistente, rutaCarpeta, AppPaths.ComparacionRutas)) {
                     AppPaths.RenombrarCarpetaAlumno(rutaCarpetaExistente, alumno);
                     Log.Warning($" 🔄 {rutaRelativa,-40} → {nombreCarpeta}");
                 }
@@ -377,6 +377,7 @@ static class AlumnosManager {
                 alumno.Telefono,
                 GitHub = alumno.GitHub,
                 alumno.Nota,
+                alumno.Recuperacion,
                 alumno.Observaciones,
                 Practicos = alumno.practicos.Select(e => e.ToEmoji()).ToList(),
                 Examenes = alumno.examenes.Select(e => e.ToEmoji()).ToList()
@@ -418,16 +419,8 @@ static class AlumnosManager {
 
     static Alumno? ExtraerAlumnoFormatoMarkdown(string linea, string comisionActual) {
         List<string> columnas = Regex.Split(linea.TrimEnd(), @"\s{2,}").ToList();
-        bool tieneColumnaFoto = columnas.Count >= 11;
-        int indiceGitHub = tieneColumnaFoto ? 4 : 3;
-        int indicePracticos = tieneColumnaFoto ? 5 : 4;
-        int indiceExamenes = tieneColumnaFoto ? 6 : 5;
-        int indicePresente = tieneColumnaFoto ? 7 : 6;
-        int indiceAsistencias = tieneColumnaFoto ? 8 : 7;
-        int indiceNota = tieneColumnaFoto ? 9 : 8;
-        int indiceObservaciones = tieneColumnaFoto ? 10 : 9;
 
-        while (columnas.Count <= indiceObservaciones) {
+        while (columnas.Count <= 9) {
             columnas.Add(string.Empty);
         }
 
@@ -436,19 +429,46 @@ static class AlumnosManager {
 
         (string apellido, string nombre) = ExtraerApellidoNombre(columnas[1]);
 
-        int nota = ExtraerInt(columnas[indiceNota]);
-        string observaciones = LimpiarCampo(columnas[indiceObservaciones]);
+        int nota = ExtraerInt(columnas[8]);
+        string recuperacion  = string.Empty;
+        string observaciones = string.Empty;
 
-        Alumno alumno = new(legajo, comisionActual, nombre, apellido, ExtraerTelefono(columnas[2]), ExtraerGitHub(columnas[indiceGitHub]), tieneColumnaFoto && ExtraerBool(columnas[3]), ExtraerBool(columnas[indicePresente]), ExtraerInt(columnas[indiceAsistencias]), nota, observaciones);
-        CargarEstados(alumno.practicos, columnas[indicePracticos]);
-        CargarEstados(alumno.examenes,  columnas[indiceExamenes]);
+        if (columnas.Count > 9) {
+            string posibleRecuperacion = LimpiarCampo(columnas[9]);
+
+            if (TrySepararRecuperacionYObservaciones(posibleRecuperacion, out string recuperacionDetectada, out string observacionesDetectadas)) {
+                recuperacion = recuperacionDetectada;
+                string observacionesRestantes = LimpiarCampo(string.Join(" ", columnas.Skip(9 + 1)));
+                observaciones = LimpiarCampo($"{observacionesDetectadas} {observacionesRestantes}");
+            } else if (string.IsNullOrWhiteSpace(posibleRecuperacion)
+                       && columnas.Count > 9 + 1
+                       && TrySepararRecuperacionYObservaciones(columnas[9 + 1], out recuperacionDetectada, out observacionesDetectadas)) {
+                recuperacion = recuperacionDetectada;
+                string observacionesRestantes = LimpiarCampo(string.Join(" ", columnas.Skip(9 + 2)));
+                observaciones = LimpiarCampo($"{observacionesDetectadas} {observacionesRestantes}");
+            } else if (string.IsNullOrWhiteSpace(posibleRecuperacion)) {
+                observaciones = LimpiarCampo(string.Join(" ", columnas.Skip(9 + 1)));
+            } else {
+                observaciones = LimpiarCampo(string.Join(" ", columnas.Skip(9)));
+            }
+        }
+
+        Alumno alumno = new(legajo, comisionActual, nombre, apellido, ExtraerTelefono(columnas[2]), ExtraerGitHub(columnas[3]), ExtraerBool(columnas[6]), ExtraerInt(columnas[7]), nota, observaciones, recuperacion);
+        CargarEstados(alumno.practicos, columnas[4], quitarVaciosFinales: false);
+        CargarEstados(alumno.examenes, columnas[5], quitarVaciosFinales: false);
 
         return alumno;
     }
 
     static string FormatearFilaTabla(params string?[] columnas) {
-        int[] anchos = [6, 30, 13, 25, 10, 3, 3, -2, -3, 0];
-        string[] separadores = ["  ", "  ", "   ", "  ", "   ", "   ", "   ", "  ", "  "];
+        int[] anchos = [6, 30, 13, 25, 10, 3, 3, -2, -3, 16, 0];
+        string[] separadores = ["  ", "  ", "   ", "  ", "   ", "   ", "   ", "  ", "  ", "  "];
+        return FormatearFilaConAnchos(anchos, separadores, columnas).TrimEnd();
+    }
+
+    static string FormatearSeparadorTabla(params string?[] columnas) {
+        int[] anchos = [6, 30, 13, 25, 10, 3, 3, -2, -3, 16, 0];
+        string[] separadores = ["  ", "  ", "   ", "  ", "   ", "  ", "   ", "  ", "  ", "  "];
         return FormatearFilaConAnchos(anchos, separadores, columnas).TrimEnd();
     }
 
@@ -459,8 +479,8 @@ static class AlumnosManager {
     }
 
     static string FormatearFilaTablaListado(params string?[] columnas) {
-        int[] anchos = [6, 30, 13, 25, 10, 3, 3, -2, -3];
-        string[] separadores = ["  ", "  ", "   ", "  ", "   ", "   ", "   ", "  "];
+        int[] anchos = [6, 30, 13, 25, 10, 3, 3, -2, -3, 16];
+        string[] separadores = ["  ", "  ", "   ", "  ", "   ", "   ", "   ", "  ", "  "];
         return FormatearFilaConAnchos(anchos, separadores, columnas).TrimEnd();
     }
 
@@ -558,16 +578,45 @@ static class AlumnosManager {
 
     static string ToSiNo(this bool valor) => valor ? "Sí" : "No";
 
+    static bool EsCampoBooleano(string valor) {
+        string texto = LimpiarCampo(valor);
+        return texto.Equals("Sí", StringComparison.OrdinalIgnoreCase)
+            || texto.Equals("Si", StringComparison.OrdinalIgnoreCase)
+            || texto.Equals("No", StringComparison.OrdinalIgnoreCase)
+            || texto.Equals("True", StringComparison.OrdinalIgnoreCase)
+            || texto.Equals("False", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static bool TrySepararRecuperacionYObservaciones(string valor, out string recuperacion, out string observaciones) {
+        recuperacion = string.Empty;
+        observaciones = string.Empty;
+
+        string texto = LimpiarCampo(valor);
+        texto = Regex.Replace(texto, @"^(?:—|-|\(-\)|\(—\))\s+", "");
+        if (string.IsNullOrWhiteSpace(texto)) {
+            return false;
+        }
+
+        Match match = Regex.Match(texto, @"^(?<fecha>\d{2}/\d{2}(?:/\d{4})?\s+\d{2}:\d{2})(?:\s+(?<observaciones>.*))?$");
+        if (!match.Success) {
+            return false;
+        }
+
+        recuperacion = match.Groups["fecha"].Value;
+        observaciones = LimpiarCampo(match.Groups["observaciones"].Value);
+        return true;
+    }
+
     static string FormatearFila(Alumno a) {
-        return FormatearFilaTabla(a.Legajo.ToString(), a.NombreCompleto, a.Telefono, a.GitHub, a.practicos.ToString(12), a.examenes.ToString(4), a.Presente.ToSiNo(), a.Asistencias.ToString(), a.Nota.ToString(), a.Observaciones);
+        return FormatearFilaTabla(a.Legajo.ToString(), a.NombreCompleto, a.Telefono, a.GitHub, a.practicos.ToEmojis(), a.examenes.ToEmojis(minimo: 2), a.Presente.ToSiNo(), a.Asistencias.ToString(), a.Nota.ToString(), a.Recuperacion, a.Observaciones);
     }
 
     static string FormatearFilaListado(Alumno a) {
-        return FormatearFilaTablaListado(a.Legajo.ToString(), a.NombreCompleto, a.Telefono, a.GitHub, a.practicos.ToString(10), a.examenes.ToString(4), a.Presente.ToSiNo(), a.Asistencias.ToString(), a.Nota.ToString());
+        return FormatearFilaTablaListado(a.Legajo.ToString(), a.NombreCompleto, a.Telefono, a.GitHub, a.practicos.ToEmojis(), a.examenes.ToEmojis(minimo: 2), a.Presente.ToSiNo(), a.Asistencias.ToString(), a.Nota.ToString(), a.Recuperacion);
     }
 
     static string FormatearFilaEstadoInformer(Alumno alumno) {
-        return FormatearFilaTablaEstadoInformer(alumno.Legajo.ToString(), alumno.NombreCompleto, alumno.practicos.ToString(10), alumno.examenes.ToString(4), alumno.Asistencias.ToString(), alumno.Nota.ToString());
+        return FormatearFilaTablaEstadoInformer(alumno.Legajo.ToString(), alumno.NombreCompleto, alumno.practicos.ToEmojis(), alumno.examenes.ToEmojis(minimo: 2), alumno.Asistencias.ToString(), alumno.Nota.ToString());
     }
 
 
@@ -578,8 +627,23 @@ static class AlumnosManager {
 
         bool derecha = ancho < 0;
         ancho = Math.Abs(ancho);
-        if (valor.Length > ancho) { return valor; }
-        return derecha ? valor.PadLeft(ancho) : valor.PadRight(ancho);
+        int anchoVisible = AnchoVisible(valor);
+        if (anchoVisible >= ancho) { return valor; }
+
+        string relleno = new(' ', ancho - anchoVisible);
+        return derecha ? relleno + valor : valor + relleno;
+    }
+
+    static int AnchoVisible(string texto) {
+        int ancho = 0;
+        TextElementEnumerator enumerador = StringInfo.GetTextElementEnumerator(texto);
+        while (enumerador.MoveNext()) {
+            string elemento = enumerador.GetTextElement();
+            UnicodeCategory categoria = CharUnicodeInfo.GetUnicodeCategory(elemento, 0);
+            ancho += categoria == UnicodeCategory.OtherSymbol ? 2 : 1;
+        }
+
+        return ancho;
     }
 
     static string FormatearTexto(string texto) {
@@ -630,13 +694,26 @@ static class AlumnosManager {
         return string.IsNullOrWhiteSpace(gitHub) ? "-" : gitHub;
     }
 
-    static string ToString(this List<Estado> estados, int ancho = 10) {
+    static string ToEmojis(this List<Estado> estados, int minimo = 0, int maximo = 0) {
         string valor = string.Join(string.Empty, estados.Select(e => e.ToEmoji()));
-        valor = valor.Replace(" ", "⚪️");
-        while (StringInfo.ParseCombiningCharacters(valor).Length < ancho) {
-            valor += "⚪️";
+        valor = valor.Replace(" ", "⚪");
+        while (StringInfo.ParseCombiningCharacters(valor).Length < minimo) {
+            valor += "⚪";
         }
-        return valor[..ancho];
+        return maximo > 0 ? TomarElementosTexto(valor, maximo) : valor;
+    }
+
+    static string TomarElementosTexto(string texto, int cantidad) {
+        if (cantidad <= 0) {
+            return string.Empty;
+        }
+
+        int[] indices = StringInfo.ParseCombiningCharacters(texto);
+        if (indices.Length <= cantidad) {
+            return texto;
+        }
+
+        return texto[..indices[cantidad]];
     }
 
     static bool ExtraerBool(string texto) {
@@ -644,7 +721,7 @@ static class AlumnosManager {
         return texto is "si" or "sí" or "true" or "yes";
     }
 
-    static void CargarEstados(List<Estado> destino, string texto) {
+    static void CargarEstados(List<Estado> destino, string texto, bool quitarVaciosFinales = true) {
         destino.Clear();
 
         TextElementEnumerator enumerador = StringInfo.GetTextElementEnumerator(texto);
@@ -660,7 +737,7 @@ static class AlumnosManager {
             }
         }
 
-        while (destino.Count > 0 && destino[^1] == Estado.Vacio) {
+        while (quitarVaciosFinales && destino.Count > 0 && destino[^1] == Estado.Vacio) {
             destino.RemoveAt(destino.Count - 1);
         }
     }
